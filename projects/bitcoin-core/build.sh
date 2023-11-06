@@ -45,21 +45,21 @@ fi
 
 # Build the fuzz targets
 
-sed -i "s|PROVIDE_FUZZ_MAIN_FUNCTION|NEVER_PROVIDE_MAIN_FOR_OSS_FUZZ|g" "./configure.ac"
-./autogen.sh
+mkdir build
+cd build
 
 # OSS-Fuzz will provide CC, CXX, etc. So only set:
 # * --enable-fuzz, see https://github.com/bitcoin/bitcoin/blob/master/doc/fuzzing.md
 # * CONFIG_SITE, see https://github.com/bitcoin/bitcoin/blob/master/depends/README.md
 if [ "$SANITIZER" = "memory" ]; then
-  CONFIG_SITE="$PWD/depends/$BUILD_TRIPLET/share/config.site" ./configure --with-seccomp=no --enable-fuzz SANITIZER_LDFLAGS="$LIB_FUZZING_ENGINE" --disable-hardening --with-asm=no
+  LDFLAGS="$LDFLAGS $LIB_FUZZING_ENGINE" cmake -S .. -DASM=OFF -DFUZZ=ON -DHARDENING=OFF --toolchain ../depends/$BUILD_TRIPLET/share/toolchain.cmake
 else
-  CONFIG_SITE="$PWD/depends/$BUILD_TRIPLET/share/config.site" ./configure --with-seccomp=no --enable-fuzz SANITIZER_LDFLAGS="$LIB_FUZZING_ENGINE"
+  LDFLAGS="$LDFLAGS $LIB_FUZZING_ENGINE" cmake -S .. -DFUZZ=ON --toolchain ../depends/$BUILD_TRIPLET/share/toolchain.cmake
 fi
 
-make -j$(nproc)
+cmake --build . -j$(nproc)
 
-WRITE_ALL_FUZZ_TARGETS_AND_ABORT="/tmp/a" "./src/test/fuzz/fuzz" || true
+WRITE_ALL_FUZZ_TARGETS_AND_ABORT="/tmp/a" "../src/test/fuzz/fuzz" || true
 readarray FUZZ_TARGETS < "/tmp/a"
 if [ -n "${OSS_FUZZ_CI-}" ]; then
   # When running in CI, check the first targets only to save time and disk space
@@ -74,12 +74,13 @@ fi
 # replace the string in the source code and re-invoke 'make'. This is slower,
 # so use the hack.
 export MAGIC_STR="b5813eee2abc9d3358151f298b75a72264ffa119d2f71ae7fefa15c4b70b4bc5b38e87e3107a730f25891ea428b2b4fabe7a84f5bfa73c79e0479e085e4ff157"
-sed -i "s|std::getenv(\"FUZZ\")|\"$MAGIC_STR\"|g" "./src/test/fuzz/fuzz.cpp"
+sed -i "s|std::getenv(\"FUZZ\")|\"$MAGIC_STR\"|g" "../src/test/fuzz/fuzz.cpp"
+
 make -j$(nproc)
 
 # Replace the magic string with the actual name of each fuzz target
 for fuzz_target in ${FUZZ_TARGETS[@]}; do
-  python3 -c "c_str_target=b\"${fuzz_target}\x00\";c_str_magic=b\"$MAGIC_STR\";dat=open('./src/test/fuzz/fuzz','rb').read();dat=dat.replace(c_str_magic, c_str_target+c_str_magic[len(c_str_target):]);open(\"$OUT/$fuzz_target\",'wb').write(dat)"
+  python3 -c "c_str_target=b\"${fuzz_target}\x00\";c_str_magic=b\"$MAGIC_STR\";dat=open('../src/test/fuzz/fuzz','rb').read();dat=dat.replace(c_str_magic, c_str_target+c_str_magic[len(c_str_target):]);open(\"$OUT/$fuzz_target\",'wb').write(dat)"
 
   chmod +x "$OUT/$fuzz_target"
   (
