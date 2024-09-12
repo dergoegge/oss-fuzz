@@ -18,10 +18,10 @@
 # Print date to embed it into build logs
 date
 
-if [ "$SANITIZER" != "introspector" ]; then
-  # Temporarily skip this under introspector
-  $SRC/build_cryptofuzz.sh
-fi
+#if [ "$SANITIZER" != "introspector" ]; then
+#  # Temporarily skip this under introspector
+#  $SRC/build_cryptofuzz.sh
+#fi
 
 cd $SRC/bitcoin-core/
 
@@ -76,34 +76,20 @@ cmake -B build_fuzz \
   -DCMAKE_C_FLAGS_RELWITHDEBINFO="" \
   -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="" \
   -DBUILD_FOR_FUZZING=ON \
+  -DBUILD_INDIVIDUAL_FUZZ_BINARIES=ON \
   -DSANITIZER_LDFLAGS="$LIB_FUZZING_ENGINE" \
   $EXTRA_BUILD_OPTIONS
 
 cmake --build build_fuzz -j$(nproc)
 
-WRITE_ALL_FUZZ_TARGETS_AND_ABORT="/tmp/a" "./build_fuzz/src/test/fuzz/fuzz" || true
+ls build_fuzz/src/test/fuzz/fuzz_* | sed 's/.*fuzz\/fuzz_//g' > /tmp/a
 readarray FUZZ_TARGETS < "/tmp/a"
-if [ -n "${OSS_FUZZ_CI-}" ]; then
-  # When running in CI, check the first targets only to save time and disk space
-  FUZZ_TARGETS=( ${FUZZ_TARGETS[@]:0:2} )
-fi
-
-# OSS-Fuzz requires a separate and self-contained binary for each fuzz target.
-# To inject the fuzz target name in the finished binary, compile the fuzz
-# executable with a "magic string" as the name of the fuzz target.
-#
-# An alternative to mocking the string in the finished binary would be to
-# replace the string in the source code and re-invoke 'cmake --build'. This is slower,
-# so use the hack.
-export MAGIC_STR="b5813eee2abc9d3358151f298b75a72264ffa119d2f71ae7fefa15c4b70b4bc5b38e87e3107a730f25891ea428b2b4fabe7a84f5bfa73c79e0479e085e4ff157"
-sed -i "s|std::getenv(\"FUZZ\")|\"$MAGIC_STR\"|g" "./src/test/fuzz/fuzz.cpp"
-cmake --build build_fuzz -j$(nproc)
 
 # Replace the magic string with the actual name of each fuzz target
 for fuzz_target in ${FUZZ_TARGETS[@]}; do
   df --human-readable ./src
-  python3 -c "c_str_target=b\"${fuzz_target}\x00\";c_str_magic=b\"$MAGIC_STR\";dat=open('./build_fuzz/src/test/fuzz/fuzz','rb').read();dat=dat.replace(c_str_magic, c_str_target+c_str_magic[len(c_str_target):]);open(\"$OUT/$fuzz_target\",'wb').write(dat)"
 
+  mv build_fuzz/src/test/fuzz/fuzz_$fuzz_target "$OUT/$fuzz_target"
   chmod +x "$OUT/$fuzz_target"
   (
     cd assets/fuzz_corpora
@@ -114,3 +100,4 @@ for fuzz_target in ${FUZZ_TARGETS[@]}; do
 done
 
 cp assets/fuzz_dicts/*.dict $OUT/
+
